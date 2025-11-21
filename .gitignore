@@ -166,5 +166,4 @@ cython_debug/
 参考输入输出/
 
 *.mp3
-robots.json
 tests/

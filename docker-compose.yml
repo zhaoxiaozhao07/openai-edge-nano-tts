@@ -2,10 +2,11 @@ services:
   app:
     container_name: openai-edge-tts
     restart: unless-stopped
-    build:
-      context: .
-      args:
-        INSTALL_FFMPEG: ${INSTALL_FFMPEG_ARG:-false} # Controlled by env var or defaults to false
+    # build:
+    #   context: .
+    #   args:
+    #     INSTALL_FFMPEG: ${INSTALL_FFMPEG_ARG:-false} # Controlled by env var or defaults to false
+    image: julienpl/openai-edge-nano-tts
     ports:
       - '${PORT:-5050}:5050'
     env_file:

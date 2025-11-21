@@ -1,0 +1,7 @@
+flask
+gevent
+python-dotenv
+edge-tts
+emoji
+flask-cors
+requests

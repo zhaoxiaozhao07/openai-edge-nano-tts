@@ -15,17 +15,17 @@ DEFAULT_LANGUAGE = os.getenv('DEFAULT_LANGUAGE', DEFAULT_CONFIGS["DEFAULT_LANGUA
 
 # OpenAI voice names mapped to edge-tts equivalents
 voice_mapping = {
-    'alloy': 'en-US-JennyNeural',
-    'ash': 'en-US-AndrewNeural',
-    'ballad': 'en-GB-ThomasNeural',
-    'coral': 'en-AU-NatashaNeural',
-    'echo': 'en-US-GuyNeural',
-    'fable': 'en-GB-SoniaNeural',
-    'nova': 'en-US-AriaNeural',
-    'onyx': 'en-US-EricNeural',
-    'sage': 'en-US-JennyNeural',
-    'shimmer': 'en-US-EmmaNeural',
-    'verse': 'en-US-BrianNeural',
+    'alloy': 'zh-CN-XiaoxiaoNeural',    # 中文女声 (晓晓)
+    'ash': 'zh-CN-YunxiNeural',          # 中文男声 (云希)
+    'ballad': 'zh-CN-YunyangNeural',     # 中文男声 (云扬)
+    'coral': 'zh-CN-XiaoyiNeural',       # 中文女声 (晓伊)
+    'echo': 'zh-CN-YunjianNeural',       # 中文男声 (云健)
+    'fable': 'zh-CN-XiaochenNeural',     # 中文女声 (晓辰)
+    'nova': 'zh-CN-XiaohanNeural',       # 中文女声 (晓涵)
+    'onyx': 'zh-CN-XiaomengNeural',      # 中文女声 (晓梦)
+    'sage': 'zh-CN-XiaomoNeural',        # 中文女声 (晓墨)
+    'shimmer': 'zh-CN-XiaoqiuNeural',    # 中文女声 (晓秋)
+    'verse': 'zh-CN-XiaoruiNeural'       # 中文女声 (晓睿)
 }
 
 model_data = [
@@ -42,31 +42,42 @@ def is_ffmpeg_installed():
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
-async def _generate_audio_stream(text, voice, speed):
+async def _generate_audio_stream(text, voice, speed, pitch=0):
     """Generate streaming TTS audio using edge-tts."""
     # Determine if the voice is an OpenAI-compatible voice or a direct edge-tts voice
     edge_tts_voice = voice_mapping.get(voice, voice)  # Use mapping if in OpenAI names, otherwise use as-is
     
-    # Convert speed to SSML rate format
+    # Prepare kwargs for edge_tts.Communicate
+    communicate_kwargs = {"text": text, "voice": edge_tts_voice}
+    
+    # Only add rate if speed is not default (1.0)
+    if speed != 1.0:
+        try:
+            speed_rate = speed_to_rate(speed)  # Convert speed value to "+X%" or "-X%"
+            communicate_kwargs["rate"] = speed_rate
+        except Exception as e:
+            print(f"Error converting speed: {e}. Speed will not be adjusted.")
+    
+    # Always add pitch (converted to Hz format)
     try:
-        speed_rate = speed_to_rate(speed)  # Convert speed value to "+X%" or "-X%"
+        pitch_value = pitch_to_pitch(pitch)  # Convert pitch value to Hz format
+        communicate_kwargs["pitch"] = pitch_value
     except Exception as e:
-        print(f"Error converting speed: {e}. Defaulting to +0%.")
-        speed_rate = "+0%"
+        print(f"Error converting pitch: {e}. Pitch will not be adjusted.")
     
     # Create the communicator for streaming
-    communicator = edge_tts.Communicate(text=text, voice=edge_tts_voice, rate=speed_rate)
+    communicator = edge_tts.Communicate(**communicate_kwargs)
     
     # Stream the audio data
     async for chunk in communicator.stream():
         if chunk["type"] == "audio":
             yield chunk["data"]
 
-def generate_speech_stream(text, voice, speed=1.0):
+def generate_speech_stream(text, voice, speed=1.0, pitch=0):
     """Generate streaming speech audio (synchronous wrapper)."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    gen = _generate_audio_stream(text, voice, speed)
+    gen = _generate_audio_stream(text, voice, speed, pitch)
 
     try:
         while True:
@@ -78,7 +89,7 @@ def generate_speech_stream(text, voice, speed=1.0):
     finally:
         loop.close()
 
-async def _generate_audio(text, voice, response_format, speed):
+async def _generate_audio(text, voice, response_format, speed, pitch=0):
     """Generate TTS audio and optionally convert to a different format."""
     # Determine if the voice is an OpenAI-compatible voice or a direct edge-tts voice
     edge_tts_voice = voice_mapping.get(voice, voice)  # Use mapping if in OpenAI names, otherwise use as-is
@@ -87,15 +98,26 @@ async def _generate_audio(text, voice, response_format, speed):
     temp_mp3_file_obj = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     temp_mp3_path = temp_mp3_file_obj.name
 
-    # Convert speed to SSML rate format
+    # Prepare kwargs for edge_tts.Communicate
+    communicate_kwargs = {"text": text, "voice": edge_tts_voice}
+    
+    # Only add rate if speed is not default (1.0)
+    if speed != 1.0:
+        try:
+            speed_rate = speed_to_rate(speed)  # Convert speed value to "+X%" or "-X%"
+            communicate_kwargs["rate"] = speed_rate
+        except Exception as e:
+            print(f"Error converting speed: {e}. Speed will not be adjusted.")
+
+    # Always add pitch (converted to Hz format)
     try:
-        speed_rate = speed_to_rate(speed)  # Convert speed value to "+X%" or "-X%"
+        pitch_value = pitch_to_pitch(pitch)  # Convert pitch value to Hz format
+        communicate_kwargs["pitch"] = pitch_value
     except Exception as e:
-        print(f"Error converting speed: {e}. Defaulting to +0%.")
-        speed_rate = "+0%"
+        print(f"Error converting pitch: {e}. Pitch will not be adjusted.")
 
     # Generate the MP3 file
-    communicator = edge_tts.Communicate(text=text, voice=edge_tts_voice, rate=speed_rate)
+    communicator = edge_tts.Communicate(**communicate_kwargs)
     await communicator.save(temp_mp3_path)
     temp_mp3_file_obj.close() # Explicitly close our file object for the initial mp3
 
@@ -163,8 +185,8 @@ async def _generate_audio(text, voice, response_format, speed):
 
     return converted_path
 
-def generate_speech(text, voice, response_format, speed=1.0):
-    return asyncio.run(_generate_audio(text, voice, response_format, speed))
+def generate_speech(text, voice, response_format, speed=1.0, pitch=0):
+    return asyncio.run(_generate_audio(text, voice, response_format, speed, pitch))
 
 def get_models():
     return model_data
@@ -206,3 +228,20 @@ def speed_to_rate(speed: float) -> str:
 
     # Format with a leading "+" or "-" as required
     return f"{percentage_change:+.0f}%"
+
+def pitch_to_pitch(pitch: int) -> str:
+    """
+    Converts an integer pitch value to the edge-tts "pitch" Hz format.
+    
+    Args:
+        pitch (int): The pitch adjustment in Hz (e.g., -50, 0, 50).
+                     Range typically from -50 to +50.
+    
+    Returns:
+        str: The formatted "pitch" string in Hz format (e.g., "-50Hz", "+0Hz", "+50Hz").
+    """
+    if pitch < -100 or pitch > 100:
+        raise ValueError("Pitch must be between -100 and 100 Hz (inclusive).")
+
+    # Format as Hz with explicit sign
+    return f"{pitch:+d}Hz"

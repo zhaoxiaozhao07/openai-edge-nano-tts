@@ -1,0 +1,15 @@
+[project]
+name = "openai-edge-tts"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "edge-tts>=7.2.3",
+    "emoji>=2.15.0",
+    "flask>=3.1.2",
+    "flask-cors>=6.0.1",
+    "gevent>=25.9.1",
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
+]

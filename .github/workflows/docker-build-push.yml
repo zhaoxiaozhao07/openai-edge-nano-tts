@@ -19,7 +19,7 @@ on:
 
 env:
   # Docker Hub 仓库名称
-  DOCKER_REPO: julienol/openai-edge-tts
+  DOCKER_REPO: julienol/openai-edge-nano-tts
 
 jobs:
   build-and-push:

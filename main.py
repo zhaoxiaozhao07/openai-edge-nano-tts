@@ -43,6 +43,18 @@ def create_speech():
         data = request.get_json()
         if not data:
             return jsonify({"error": "Invalid JSON body"}), 400
+
+        # Clean inputs: remove leading/trailing whitespace
+        if isinstance(data.get('voice'), str):
+            data['voice'] = data['voice'].strip()
+        if isinstance(data.get('model'), str):
+            data['model'] = data['model'].strip()
+
+        # OpenAI API compatibility: 
+        # If 'voice' is provided, it takes precedence and should be treated as the model ID
+        # because standard OpenAI clients send {"model": "tts-1", "voice": "target_voice"}
+        if data.get('voice'):
+            data['model'] = data.get('voice')
             
         voice = data.get('voice') or data.get('model')
         

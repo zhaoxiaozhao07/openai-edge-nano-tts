@@ -7,6 +7,79 @@ import threading
 import time
 import base64
 import json
+import re
+
+# --- 文本分句工具 ---
+def split_text_into_sentences(text, min_length=10, max_length=500):
+    """
+    将文本按句子分割，用于流式 TTS 处理。
+    
+    Args:
+        text: 输入文本
+        min_length: 最小句子长度，太短的句子会合并到下一句
+        max_length: 最大句子长度，超过此长度会强制切分
+    
+    Returns:
+        句子列表
+    """
+    if not text or not text.strip():
+        return []
+    
+    # 按中英文句号、问号、感叹号、分号分割
+    # 保留分隔符
+    pattern = r'([。！？!?;；\n]+)'
+    parts = re.split(pattern, text)
+    
+    sentences = []
+    current_sentence = ""
+    
+    for i, part in enumerate(parts):
+        if not part:
+            continue
+            
+        # 如果是分隔符，加到当前句子末尾
+        if re.match(pattern, part):
+            current_sentence += part
+            # 如果当前句子足够长，保存它
+            if len(current_sentence.strip()) >= min_length:
+                sentences.append(current_sentence.strip())
+                current_sentence = ""
+        else:
+            # 如果当前句子加上这部分超过最大长度，先保存当前句子
+            if current_sentence and len(current_sentence) + len(part) > max_length:
+                if current_sentence.strip():
+                    sentences.append(current_sentence.strip())
+                current_sentence = part
+            else:
+                current_sentence += part
+    
+    # 处理最后一个句子
+    if current_sentence.strip():
+        # 如果太短且有之前的句子，合并到最后一个
+        if len(current_sentence.strip()) < min_length and sentences:
+            sentences[-1] += current_sentence.strip()
+        else:
+            sentences.append(current_sentence.strip())
+    
+    # 处理超长句子，按逗号进一步分割
+    final_sentences = []
+    for sentence in sentences:
+        if len(sentence) > max_length:
+            # 按逗号分割
+            sub_parts = re.split(r'([,，、]+)', sentence)
+            current = ""
+            for sub_part in sub_parts:
+                if len(current) + len(sub_part) > max_length and current:
+                    final_sentences.append(current.strip())
+                    current = sub_part
+                else:
+                    current += sub_part
+            if current.strip():
+                final_sentences.append(current.strip())
+        else:
+            final_sentences.append(sentence)
+    
+    return final_sentences
 
 # --- 配置 ---
 STATIC_API_KEY = "sk-123456"
@@ -746,38 +819,92 @@ def create_speech():
 
     try:
         if stream:
-            # 流式响应
-            upstream_response = tts_engine.get_audio(text_input, voice=model_id, stream=True)
+            # 流式响应 - 按句子分割处理
+            sentences = split_text_into_sentences(text_input)
+            print(f"文本已分割为 {len(sentences)} 个句子进行流式处理")
             
             def generate():
-                # 发送初始 SSE 事件（可选，模拟 OpenAI 格式）
-                # yield f"data: {json.dumps({'choices': [{'delta': {'content': ''}}]})}\n\n"
+                chunk_size = 4096  # 每次读取的块大小
                 
-                chunk_size = 4096 # 每次读取的块大小
-                while True:
-                    chunk = upstream_response.read(chunk_size)
-                    if not chunk:
-                        break
+                for idx, sentence in enumerate(sentences):
+                    if not sentence.strip():
+                        continue
                     
-                    # 将音频块编码为 base64
-                    audio_base64 = base64.b64encode(chunk).decode('utf-8')
+                    print(f"处理句子 {idx + 1}/{len(sentences)}: '{sentence[:30]}...'")
                     
-                    # 构造 SSE 事件数据
-                    event_data = {
-                        "type": "speech.audio.delta",
-                        "audio": audio_base64
-                    }
-                    
-                    yield f"data: {json.dumps(event_data)}\n\n"
+                    try:
+                        # 为每个句子请求上游 TTS
+                        upstream_response = tts_engine.get_audio(sentence, voice=model_id, stream=True)
+                        
+                        # 流式读取并返回音频块
+                        while True:
+                            chunk = upstream_response.read(chunk_size)
+                            if not chunk:
+                                break
+                            
+                            # 将音频块编码为 base64
+                            audio_base64 = base64.b64encode(chunk).decode('utf-8')
+                            
+                            # 构造 SSE 事件数据
+                            event_data = {
+                                "type": "speech.audio.delta",
+                                "audio": audio_base64,
+                                "sentence_index": idx,
+                                "total_sentences": len(sentences)
+                            }
+                            
+                            yield f"data: {json.dumps(event_data)}\n\n"
+                        
+                        # 关闭这个句子的响应
+                        try:
+                            upstream_response.close()
+                        except:
+                            pass
+                            
+                    except Exception as e:
+                        print(f"处理句子 {idx + 1} 时出错: {e}")
+                        # 发送错误事件但继续处理下一个句子
+                        error_event = {
+                            "type": "speech.error",
+                            "error": str(e),
+                            "sentence_index": idx
+                        }
+                        yield f"data: {json.dumps(error_event)}\n\n"
+                        continue
                 
-                # 发送结束标记（如果需要）
-                # yield "data: [DONE]\n\n"
+                # 发送完成标记
+                done_event = {
+                    "type": "speech.done",
+                    "total_sentences": len(sentences)
+                }
+                yield f"data: {json.dumps(done_event)}\n\n"
 
             return Response(stream_with_context(generate()), mimetype='text/event-stream')
         else:
-            # 非流式响应
-            audio_data = tts_engine.get_audio(text_input, voice=model_id, stream=False)
-            return Response(audio_data, mimetype='audio/mpeg')
+            # 非流式响应 - 按句子分割处理并合并
+            sentences = split_text_into_sentences(text_input)
+            print(f"非流式模式: 文本已分割为 {len(sentences)} 个句子")
+            
+            all_audio_data = b''
+            for idx, sentence in enumerate(sentences):
+                if not sentence.strip():
+                    continue
+                
+                print(f"处理句子 {idx + 1}/{len(sentences)}: '{sentence[:30]}...'")
+                
+                try:
+                    audio_chunk = tts_engine.get_audio(sentence, voice=model_id, stream=False)
+                    if audio_chunk:
+                        all_audio_data += audio_chunk
+                except Exception as e:
+                    print(f"处理句子 {idx + 1} 时出错: {e}")
+                    # 继续处理下一个句子
+                    continue
+            
+            if not all_audio_data:
+                return jsonify({"error": "Failed to generate audio for any sentence"}), 500
+            
+            return Response(all_audio_data, mimetype='audio/mpeg')
 
     except Exception as e:
         print(f"TTS 引擎错误: {e}")

@@ -16,7 +16,6 @@ on:
         description: '自定义镜像标签（可选）'
         required: false
         default: 'manual'
-
 env:
   # Docker Hub 仓库名称
   DOCKER_REPO: julienol/openai-edge-nano-tts
